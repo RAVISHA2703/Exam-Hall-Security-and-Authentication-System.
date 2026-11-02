@@ -1,0 +1,432 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define MAX_STUDENTS 200
+#define NAME_LEN 60
+#define ROLL_LEN 24
+#define EXAM_LEN 24
+#define HALL_LEN 24
+#define SEAT_LEN 16
+#define LINE_LEN 256
+
+#define STUDENT_FILE "students.dat"
+#define LOG_FILE "entry_log.txt"
+
+typedef struct {
+    char name[NAME_LEN];
+    char roll[ROLL_LEN];
+    char examCode[EXAM_LEN];
+    char hall[HALL_LEN];
+    char seat[SEAT_LEN];
+    int eligible;
+    int hasEntered;
+} Student;
+
+Student students[MAX_STUDENTS];
+int studentCount = 0;
+
+/* Remove newline from input */
+void trimNewline(char *text) {
+    size_t len = strlen(text);
+
+    if (len > 0 && text[len - 1] == '\n') {
+        text[len - 1] = '\0';
+    }
+}
+
+/* Take string input safely */
+void readLine(const char *prompt, char *buffer, size_t size) {
+    printf("%s", prompt);
+
+    if (fgets(buffer, (int)size, stdin) != NULL) {
+        trimNewline(buffer);
+    } else {
+        buffer[0] = '\0';
+    }
+}
+
+/* Find student using roll number */
+int findStudentByRoll(const char *roll) {
+    for (int i = 0; i < studentCount; i++) {
+        if (strcmp(students[i].roll, roll) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/* Save student records to file */
+void saveStudents(void) {
+    FILE *file = fopen(STUDENT_FILE, "w");
+
+    if (file == NULL) {
+        printf("Error saving student records.\n");
+        return;
+    }
+
+    for (int i = 0; i < studentCount; i++) {
+        fprintf(file, "%s|%s|%s|%s|%s|%d|%d\n",
+                students[i].name,
+                students[i].roll,
+                students[i].examCode,
+                students[i].hall,
+                students[i].seat,
+                students[i].eligible,
+                students[i].hasEntered);
+    }
+
+    fclose(file);
+}
+
+/* Load previously saved records */
+void loadStudents(void) {
+    FILE *file = fopen(STUDENT_FILE, "r");
+
+    if (file == NULL) {
+        return;
+    }
+
+    char line[LINE_LEN];
+
+    while (fgets(line, sizeof(line), file) != NULL &&
+           studentCount < MAX_STUDENTS) {
+
+        Student s;
+
+        int fields = sscanf(
+            line,
+            "%59[^|]|%23[^|]|%23[^|]|%23[^|]|%15[^|]|%d|%d",
+            s.name,
+            s.roll,
+            s.examCode,
+            s.hall,
+            s.seat,
+            &s.eligible,
+            &s.hasEntered
+        );
+
+        if (fields == 7) {
+            students[studentCount++] = s;
+        }
+    }
+
+    fclose(file);
+}
+
+/* Record authentication attempts */
+void logAttempt(const char *roll,
+                const char *result,
+                const char *reason) {
+
+    FILE *file = fopen(LOG_FILE, "a");
+
+    if (file == NULL) {
+        printf("Warning: Could not write entry log.\n");
+        return;
+    }
+
+    time_t now = time(NULL);
+    struct tm *local = localtime(&now);
+
+    char timestamp[32] = "Unknown time";
+
+    if (local != NULL) {
+        strftime(timestamp, sizeof(timestamp),
+                 "%Y-%m-%d %H:%M:%S", local);
+    }
+
+    fprintf(file,
+            "%s | Roll: %s | Result: %s | Reason: %s\n",
+            timestamp, roll, result, reason);
+
+    fclose(file);
+}
+
+/* Register a student */
+void registerStudent(void) {
+    if (studentCount >= MAX_STUDENTS) {
+        printf("Student record limit reached.\n");
+        return;
+    }
+
+    Student s;
+
+    printf("\n--- Register Exam Candidate ---\n");
+
+    readLine("Student name: ", s.name, sizeof(s.name));
+    readLine("Roll number: ", s.roll, sizeof(s.roll));
+
+    if (s.name[0] == '\0' || s.roll[0] == '\0') {
+        printf("Name and roll number cannot be empty.\n");
+        return;
+    }
+
+    if (findStudentByRoll(s.roll) != -1) {
+        printf("Student with this roll number already exists.\n");
+        return;
+    }
+
+    readLine("Exam registration code: ",
+             s.examCode, sizeof(s.examCode));
+
+    readLine("Assigned exam hall: ",
+             s.hall, sizeof(s.hall));
+
+    readLine("Assigned seat number: ",
+             s.seat, sizeof(s.seat));
+
+    char answer[8];
+
+    readLine("Eligible for exam? (y/n): ",
+             answer, sizeof(answer));
+
+    s.eligible =
+        (answer[0] == 'y' || answer[0] == 'Y');
+
+    s.hasEntered = 0;
+
+    if (s.examCode[0] == '\0' ||
+        s.hall[0] == '\0' ||
+        s.seat[0] == '\0') {
+
+        printf("Required fields cannot be empty.\n");
+        return;
+    }
+
+    students[studentCount++] = s;
+
+    saveStudents();
+
+    printf("Student registered successfully!\n");
+}
+
+/* Authenticate student and record entry */
+void authenticateStudent(void) {
+    char roll[ROLL_LEN];
+    char code[EXAM_LEN];
+
+    printf("\n--- Exam Hall Authentication ---\n");
+
+    readLine("Enter roll number: ", roll, sizeof(roll));
+    readLine("Enter exam registration code: ",
+             code, sizeof(code));
+
+    int index = findStudentByRoll(roll);
+
+    if (index == -1) {
+        printf("ACCESS DENIED: Student record not found.\n");
+
+        logAttempt(roll, "REJECTED",
+                   "Unknown roll number");
+        return;
+    }
+
+    Student *s = &students[index];
+
+    if (strcmp(s->examCode, code) != 0) {
+        printf("ACCESS DENIED: Incorrect exam code.\n");
+
+        logAttempt(roll, "REJECTED",
+                   "Incorrect exam registration code");
+        return;
+    }
+
+    if (!s->eligible) {
+        printf("ACCESS DENIED: Student is not eligible.\n");
+
+        logAttempt(roll, "REJECTED",
+                   "Student not eligible");
+        return;
+    }
+
+    if (s->hasEntered) {
+        printf("ACCESS DENIED: Entry already recorded.\n");
+
+        logAttempt(roll, "REJECTED",
+                   "Duplicate entry attempt");
+        return;
+    }
+
+    printf("\nAUTHENTICATION SUCCESSFUL!\n");
+    printf("Student Name: %s\n", s->name);
+    printf("Roll Number: %s\n", s->roll);
+    printf("Exam Hall: %s\n", s->hall);
+    printf("Seat Number: %s\n", s->seat);
+
+    printf("\nThe invigilator must check the official "
+           "admit card and photo ID manually.\n");
+
+    char confirm[8];
+
+    readLine("Have documents been checked? (y/n): ",
+             confirm, sizeof(confirm));
+
+    if (confirm[0] == 'y' || confirm[0] == 'Y') {
+        s->hasEntered = 1;
+
+        saveStudents();
+
+        logAttempt(
+            roll,
+            "ACCEPTED",
+            "Record matched and documents confirmed"
+        );
+
+        printf("ENTRY RECORDED SUCCESSFULLY!\n");
+    } else {
+        logAttempt(
+            roll,
+            "PENDING",
+            "Manual document verification not confirmed"
+        );
+
+        printf("Entry not recorded. Contact the invigilator.\n");
+    }
+}
+
+/* Check exam hall status */
+void checkHallAvailability(void) {
+    char hall[HALL_LEN];
+
+    int assigned = 0;
+    int entered = 0;
+
+    printf("\n--- Exam Hall Status ---\n");
+
+    readLine("Enter hall number: ", hall, sizeof(hall));
+
+    for (int i = 0; i < studentCount; i++) {
+        if (strcmp(students[i].hall, hall) == 0) {
+            assigned++;
+
+            if (students[i].hasEntered) {
+                entered++;
+            }
+        }
+    }
+
+    if (assigned == 0) {
+        printf("No students assigned to this hall.\n");
+    } else {
+        printf("Exam Hall: %s\n", hall);
+        printf("Assigned Students: %d\n", assigned);
+        printf("Students Entered: %d\n", entered);
+        printf("Students Not Entered: %d\n",
+               assigned - entered);
+    }
+}
+
+/* Display all registered students */
+void displayStudentRecords(void) {
+    printf("\n--- Registered Exam Candidates ---\n");
+
+    if (studentCount == 0) {
+        printf("No student records available.\n");
+        return;
+    }
+
+    printf("%-18s %-12s %-10s %-8s %-10s %-10s\n",
+           "Name", "Roll", "Hall", "Seat",
+           "Eligible", "Entered");
+
+    printf("----------------------------------------------------------\n");
+
+    for (int i = 0; i < studentCount; i++) {
+        printf("%-18.18s %-12.12s %-10.10s %-8.8s %-10s %-10s\n",
+               students[i].name,
+               students[i].roll,
+               students[i].hall,
+               students[i].seat,
+               students[i].eligible ? "Yes" : "No",
+               students[i].hasEntered ? "Yes" : "No");
+    }
+}
+
+/* View authentication log */
+void viewEntryLog(void) {
+    FILE *file = fopen(LOG_FILE, "r");
+
+    char line[LINE_LEN];
+
+    printf("\n--- Exam Hall Entry Log ---\n");
+
+    if (file == NULL) {
+        printf("No entry log available.\n");
+        return;
+    }
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        printf("%s", line);
+    }
+
+    fclose(file);
+}
+
+/* Main menu */
+void showMenu(void) {
+    printf("\n========================================\n");
+    printf(" EXAM HALL SECURITY SYSTEM\n");
+    printf("========================================\n");
+
+    printf("1. Register Student\n");
+    printf("2. Authenticate Student\n");
+    printf("3. Check Exam Hall Status\n");
+    printf("4. Display Student Records\n");
+    printf("5. View Entry Log\n");
+    printf("0. Exit\n");
+}
+
+/* Main function */
+int main(void) {
+    char choiceText[16];
+    int choice;
+
+    loadStudents();
+
+    printf("Loaded %d saved student record(s).\n",
+           studentCount);
+
+    do {
+        showMenu();
+
+        readLine("Enter your choice: ",
+                 choiceText, sizeof(choiceText));
+
+        choice = atoi(choiceText);
+
+        switch (choice) {
+            case 1:
+                registerStudent();
+                break;
+
+            case 2:
+                authenticateStudent();
+                break;
+
+            case 3:
+                checkHallAvailability();
+                break;
+
+            case 4:
+                displayStudentRecords();
+                break;
+
+            case 5:
+                viewEntryLog();
+                break;
+
+            case 0:
+                printf("Exiting system. Goodbye!\n");
+                break;
+
+            default:
+                printf("Invalid choice. Try again.\n");
+        }
+
+    } while (choice != 0);
+
+    return 0;
+}
